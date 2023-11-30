@@ -60,7 +60,7 @@ class RegisterView(CreateAPIView):
     serializer_class = import_string(drfr_settings.REGISTER_SERIALIZER)
 
     def create(self, request, *args, **kwargs):
-        serializer = self.serializer_class(data=request.data)
+        serializer = self.serializer_class(data=request.data, context={'request': request})
         serializer.is_valid(raise_exception=True)
 
         user = serializer.save()
