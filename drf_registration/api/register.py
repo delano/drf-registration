@@ -1,3 +1,6 @@
+
+import logging
+
 from django.contrib.auth import password_validation
 from django.http import HttpResponse
 from django.shortcuts import render
@@ -21,6 +24,8 @@ from drf_registration.utils.users import (
     set_user_verified,
     get_user_from_uid,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RegisterSerializer(get_user_serializer()):
@@ -64,15 +69,51 @@ class RegisterView(CreateAPIView):
         serializer.is_valid(raise_exception=True)
 
         user = serializer.save()
-        data = get_user_profile_data(user)
+
+        # This approach instantiates the serializer again. It's not ideal
+        # b/c it inefficient and also leads to an exception in cases where
+        # the user serializer needs the request object (e.g. to get the
+        # current domain, current user id etc for generating REST links).
+        #
+        # data = get_user_profile_data(user)
+
+        # Using the serializer we just instantiated, we can get the same
+        # data and avoid a HyperlinkedIdentityField exception.
+        #
+        # e.g.
+        # {
+        #     "id": "dd2e10a2-7ad2-4e29-9444-018907034352",
+        #     "url": "http://127.0.0.1:8000/api/users/dd2e10a2-7ad2-4e29-9444-018907034352/",
+        #     "username": null,
+        #     "email": "a1@example.com",
+        #     "is_staff": false
+        # }
+        #
+        data = serializer.data
 
         domain = get_current_domain(request)
 
         # Send email activation link
-        if has_user_activate_token() or has_user_verify_code():
-            send_verify_email(user, domain)
-        else:
-            send_email_welcome(user)
+        try:
+            if has_user_activate_token() or has_user_verify_code():
+                send_verify_email(user, domain)
+            else:
+                send_email_welcome(user)
+
+        except ConnectionRefusedError as e:
+            # Simply log the error and continue
+            largs = (user.email, e)
+            emsg = 'Failed to send welcome email to: %s (%s)' % largs
+            logger.critical(emsg)
+
+        except Exception as e:
+            # For all other errors, log the error and continue as
+            # well. This is to prevent the registration process from
+            # failing due to an email error.
+            largs = (user.email, e)
+            emsg = 'Failed to send welcome email to: %s (%s)' % largs
+            logger.error(emsg)
+
 
         return Response(data, status=status.HTTP_201_CREATED)
 
